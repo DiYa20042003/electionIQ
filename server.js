@@ -13,6 +13,11 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const MAX_CHAT_MESSAGES = 20;
+const MAX_MESSAGE_LENGTH = 4000;
+const ALLOWED_ROLES = new Set(['user', 'assistant', 'model']);
+
+app.disable('x-powered-by');
 
 // ===== SECURITY HEADERS =====
 app.use(helmet({
@@ -20,8 +25,8 @@ app.use(helmet({
     directives: {
       defaultSrc: ["'self'"],
       scriptSrc: ["'self'"],
-      styleSrc: ["'self'", "https://fonts.googleapis.com", "'unsafe-inline'"],
-      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      fontSrc: ["'self'"],
       connectSrc: ["'self'", "https://generativelanguage.googleapis.com"],
       imgSrc: ["'self'", "data:"],
       frameSrc: ["'none'"],
@@ -29,6 +34,7 @@ app.use(helmet({
   },
   hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  crossOriginEmbedderPolicy: false,
 }));
 
 // ===== CORS =====
@@ -46,8 +52,42 @@ app.use(cors({
   credentials: false,
 }));
 
-app.use(express.json({ limit: '16kb' }));
+app.use(express.json({ limit: '32kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+function getMessageText(message) {
+  if (!message || typeof message !== 'object') return '';
+  if (typeof message.content === 'string') return message.content;
+  if (Array.isArray(message.parts)) {
+    return message.parts
+      .map(part => (part && typeof part.text === 'string' ? part.text : ''))
+      .join('');
+  }
+  return '';
+}
+
+function validateChatMessages(messages) {
+  if (!Array.isArray(messages)) return 'The request body must include a messages array.';
+  if (messages.length === 0) return 'At least one message is required.';
+  if (messages.length > MAX_CHAT_MESSAGES) return `Chat history cannot exceed ${MAX_CHAT_MESSAGES} messages.`;
+
+  for (let i = 0; i < messages.length; i += 1) {
+    const msg = messages[i];
+    if (!msg || typeof msg !== 'object') return `Message ${i + 1} must be an object.`;
+    if (typeof msg.role !== 'string' || !ALLOWED_ROLES.has(msg.role)) {
+      return 'Each message role must be user, assistant, or model.';
+    }
+    const text = getMessageText(msg).trim();
+    if (!text) return `Message ${i + 1} must include text content.`;
+    if (text.length > MAX_MESSAGE_LENGTH) {
+      return `Message ${i + 1} is too long. Each message must be ${MAX_MESSAGE_LENGTH} characters or less.`;
+    }
+  }
+
+  const last = messages[messages.length - 1];
+  if (last.role !== 'user') return 'The final message must come from the user.';
+  return null;
+}
 
 // ===== RATE LIMITING =====
 const globalLimiter = rateLimit({
@@ -142,11 +182,16 @@ When a user asks for deadlines or an election schedule:
 // ===== CHAT ENDPOINT =====
 app.post('/api/chat', chatLimiter, async (req, res) => {
   const { messages } = req.body;
-
   const apiKey = process.env.GEMINI_API_KEY;
+
   if (!apiKey) {
     console.error('GEMINI_API_KEY missing');
     return res.status(503).json({ error: 'Service configuration error' });
+  }
+
+  const validationError = validateChatMessages(messages);
+  if (validationError) {
+    return res.status(400).json({ error: validationError });
   }
 
   // SSE headers
@@ -166,10 +211,10 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
     // Robust message mapping
     const contents = messages.map(msg => {
       const role = msg.role === 'assistant' || msg.role === 'model' ? 'model' : 'user';
-      if (msg.parts && Array.isArray(msg.parts)) {
-        return { role, parts: msg.parts };
+      if (Array.isArray(msg.parts) && msg.parts.length) {
+        return { role, parts: msg.parts.map(part => ({ text: String(part.text || '') })) };
       }
-      return { role, parts: msg.content ? [{ text: msg.content }] : [] };
+      return { role, parts: [{ text: String(msg.content || '') }] };
     }).filter(c => c.parts.length > 0);
 
     console.log(`Starting stream for model: gemini-2.5-flash`);
@@ -223,8 +268,10 @@ app.get('*', (req, res) => {
 });
 
 // ===== START =====
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🗳️  ElectIQ running on http://0.0.0.0:${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n🗳️  ElectIQ running on http://0.0.0.0:${PORT}`);
+  });
+}
 
 module.exports = app;
