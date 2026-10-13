@@ -1,4 +1,11 @@
-const key = "AIzaSyA1iUou1qOSZDk4Ip0q-3QAiygDgVSZNYw";
+require('dotenv').config();
+
+const key = process.env.GEMINI_API_KEY;
+
+if (!key) {
+    console.error('❌ Error: GEMINI_API_KEY is not configured. Set it in .env or your environment variables.');
+    process.exit(1);
+}
 
 const modelsToTry = [
     "gemini-2.5-flash",
@@ -6,9 +13,8 @@ const modelsToTry = [
     "gemini-2.0-flash-001",
     "gemini-2.0-flash-lite-001",
     "gemini-2.0-flash-lite",
-    "gemini-3.1-pro-preview",
-    "gemini-3-pro-preview",
-    "gemini-2.5-flash-image",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
 ];
 
 async function test() {

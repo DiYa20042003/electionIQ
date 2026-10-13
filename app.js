@@ -1,6 +1,7 @@
 /**
  * ElectIQ — Election Intelligence Assistant
  * Frontend App Logic (Gemini Native Edition)
+ * Security Hardened: XSS Protected
  */
 
 // ===== STATE =====
@@ -26,8 +27,39 @@ const voterPlanClose = $("voterPlanClose");
 const voterPlanChecklist = $("voterPlanChecklist");
 const voterPlanTitle = $("voterPlanTitle");
 
+// ===== SECURITY & ESCAPING =====
+function escapeHtml(str) {
+  if (typeof str !== 'string') return '';
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function sanitizeHtml(dirty) {
+  if (typeof dirty !== 'string') return '';
+  // Strip executable scripts and dangerous pseudo-protocols
+  let clean = dirty
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/\bjavascript:[^"'\s>]+/gi, '')
+    .replace(/\bdata:[^"'\s>]+/gi, '');
+
+  // Strip unapproved inline event handlers (allow only safe sendFollowUp)
+  clean = clean.replace(/\bon\w+\s*=\s*(["'])[\s\S]*?\1/gi, (match) => {
+    if (/onclick\s*=\s*["']sendFollowUp\([a-zA-Z0-9_\s'"]*\)["']/i.test(match)) {
+      return match;
+    }
+    return '';
+  });
+
+  return clean;
+}
+
 // ===== MARKDOWN + HTML RENDERER =====
 function renderContent(text) {
+  if (!text) return '';
   let html = text;
 
   // Strip dynamic widgets from main text flow (handled by intercept)
@@ -55,7 +87,6 @@ function renderContent(text) {
   // Markdown: Paragraphs
   const lines = html.split('\n');
   const wrapped = [];
-  let inBlock = false;
 
   for (let line of lines) {
     const trimmed = line.trim();
@@ -64,7 +95,7 @@ function renderContent(text) {
     wrapped.push(`<p>${trimmed}</p>`);
   }
 
-  return wrapped.join('\n');
+  return sanitizeHtml(wrapped.join('\n'));
 }
 
 // ===== DYNAMIC WIDGET INTERCEPTOR =====
@@ -109,8 +140,8 @@ function renderVoterPlanButton(data, container) {
           <span class="checkmark"></span>
         </label>
         <div class="checklist-content">
-          <div class="checklist-label">${t.label}</div>
-          <div class="checklist-detail">${t.detail}</div>
+          <div class="checklist-label">${escapeHtml(t.label)}</div>
+          <div class="checklist-detail">${escapeHtml(t.detail)}</div>
         </div>
       </div>
     `).join('');
@@ -127,10 +158,10 @@ function renderInteractiveTimeline(data, container) {
     ${(data.events || []).map(e => `
       <div class="horiz-timeline-item ${e.status === 'critical' ? 'critical' : ''}">
         <div class="horiz-dot"></div>
-        <div class="horiz-date">${e.date}</div>
+        <div class="horiz-date">${escapeHtml(e.date)}</div>
         <div class="horiz-card">
-          <div class="horiz-title">${e.title}</div>
-          <div class="horiz-desc">${e.description}</div>
+          <div class="horiz-title">${escapeHtml(e.title)}</div>
+          <div class="horiz-desc">${escapeHtml(e.description)}</div>
         </div>
       </div>
     `).join('')}
@@ -169,7 +200,7 @@ async function streamResponse(response, onChunk, onDone) {
       } catch (e) {
         console.error('Parse error:', e);
         if (e.message && !e.message.includes('JSON')) {
-          onChunk(`<div class="error-msg">Error: ${e.message}</div>`);
+          onChunk(`<div class="error-msg">Error: ${escapeHtml(e.message)}</div>`);
         }
       }
     }
@@ -197,7 +228,10 @@ async function handleSend(query) {
       body: JSON.stringify({ messages: state.messages })
     });
 
-    if (!response.ok) throw new Error('API request failed');
+    if (!response.ok) {
+      const errJson = await response.json().catch(() => ({}));
+      throw new Error(errJson.error || 'API request failed');
+    }
 
     thinkingOverlay.classList.remove('visible');
     let full = '';
@@ -213,7 +247,7 @@ async function handleSend(query) {
     });
   } catch (err) {
     thinkingOverlay.classList.remove('visible');
-    assistantBubble.innerHTML = `<div class="error-msg">Error: ${err.message}</div>`;
+    assistantBubble.innerHTML = `<div class="error-msg">Error: ${escapeHtml(err.message)}</div>`;
   } finally {
     state.isStreaming = false;
     sendBtn.disabled = false;

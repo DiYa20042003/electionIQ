@@ -9,6 +9,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
+const fs = require('fs');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
@@ -47,7 +48,13 @@ app.use(cors({
 }));
 
 app.use(express.json({ limit: '16kb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+
+// Serve static assets from public/ if present, otherwise root
+const publicDir = path.join(__dirname, 'public');
+if (fs.existsSync(publicDir)) {
+  app.use(express.static(publicDir));
+}
+app.use(express.static(__dirname));
 
 // ===== RATE LIMITING =====
 const globalLimiter = rateLimit({
@@ -141,12 +148,41 @@ When a user asks for deadlines or an election schedule:
 
 // ===== CHAT ENDPOINT =====
 app.post('/api/chat', chatLimiter, async (req, res) => {
-  const { messages } = req.body;
+  const { messages } = req.body || {};
+
+  // ===== INPUT VALIDATION =====
+  if (!messages || !Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({ error: 'messages must be a non-empty array' });
+  }
+
+  const validRoles = ['user', 'assistant', 'model'];
+  for (const msg of messages) {
+    if (!msg || typeof msg !== 'object') {
+      return res.status(400).json({ error: 'Each message must be an object' });
+    }
+    if (!msg.role || !validRoles.includes(msg.role)) {
+      return res.status(400).json({ error: `Invalid role: ${msg.role}. Allowed: ${validRoles.join(', ')}` });
+    }
+    const text = typeof msg.content === 'string'
+      ? msg.content.trim()
+      : (Array.isArray(msg.parts) ? msg.parts.map(p => p.text || '').join('').trim() : '');
+    if (!text) {
+      return res.status(400).json({ error: 'Message content cannot be empty' });
+    }
+    if (text.length > 4000) {
+      return res.status(400).json({ error: 'Message content exceeds maximum allowed length of 4000 characters' });
+    }
+  }
+
+  const lastMsg = messages[messages.length - 1];
+  if (lastMsg.role !== 'user') {
+    return res.status(400).json({ error: 'Last message must be from user' });
+  }
 
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     console.error('GEMINI_API_KEY missing');
-    return res.status(503).json({ error: 'Service configuration error' });
+    return res.status(503).json({ error: 'Service configuration error: GEMINI_API_KEY is not configured' });
   }
 
   // SSE headers
@@ -219,12 +255,17 @@ app.get('/api/health', (req, res) => {
 
 // ===== SPA FALLBACK =====
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  const indexPath = fs.existsSync(path.join(__dirname, 'public', 'index.html'))
+    ? path.join(__dirname, 'public', 'index.html')
+    : path.join(__dirname, 'index.html');
+  res.sendFile(indexPath);
 });
 
-// ===== START =====
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🗳️  ElectIQ running on http://0.0.0.0:${PORT}`);
-});
+// ===== START (only when run directly) =====
+if (require.main === module) {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n🗳️  ElectIQ running on http://0.0.0.0:${PORT}`);
+  });
+}
 
 module.exports = app;

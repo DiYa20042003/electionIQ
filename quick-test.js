@@ -1,4 +1,11 @@
-const key = "AIzaSyA1iUou1qOSZDk4Ip0q-3QAiygDgVSZNYw";
+require('dotenv').config();
+
+const key = process.env.GEMINI_API_KEY;
+
+if (!key) {
+    console.error('❌ Error: GEMINI_API_KEY is not configured. Set it in .env or your environment variables.');
+    process.exit(1);
+}
 
 async function test() {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`;

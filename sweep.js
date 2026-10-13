@@ -1,7 +1,14 @@
-const newKey = "AIzaSyAqLCHHiV-q6yxqvpKvpXsHo-X3dpy0GbM";
+require('dotenv').config();
+
+const apiKey = process.env.GEMINI_API_KEY;
+
+if (!apiKey) {
+    console.error('❌ Error: GEMINI_API_KEY is not configured. Set it in .env or your environment variables.');
+    process.exit(1);
+}
 
 async function runAll() {
-    const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${newKey}`);
+    const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
     const listData = await listRes.json();
     
     if (!listData.models) {
@@ -13,11 +20,11 @@ async function runAll() {
         .filter(m => m.supportedGenerationMethods.includes('generateContent'))
         .map(m => m.name.replace('models/', ''));
     
-    console.log(`Testing ${models.length} models with new key...\n`);
+    console.log(`Testing ${models.length} models with configured key...\n`);
     
     for (const modelName of models) {
         try {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${newKey}`;
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
             const res = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
